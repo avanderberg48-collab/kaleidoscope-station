@@ -1,0 +1,29 @@
+name: Keep the station awake
+
+# The free cloud host sleeps after 15 minutes without traffic, so touch it every
+# five minutes. Public repo, so these minutes cost nothing.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  touch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake and check the station
+        run: |
+          set -e
+          for i in 1 2 3; do
+            code=$(curl -s -o /tmp/np.json -w "%{http_code}" --max-time 90 https://kaleidoscope-online.onrender.com/np || true)
+            echo "attempt $i -> HTTP $code"
+            if [ "$code" = "200" ]; then
+              cat /tmp/np.json
+              echo
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "station did not answer yet"
+          exit 0
