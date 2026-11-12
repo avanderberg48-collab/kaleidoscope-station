@@ -514,6 +514,7 @@ play();
         return self._json({"ok": 1, "cmd": cmd})
 
     def do_GET(self):
+        from urllib.parse import urlparse, parse_qs
         if self.path == "/" or self.path.startswith("/index"):
             b = self.page().encode()
             self.send_response(200)
@@ -527,6 +528,14 @@ play();
                        "paused": music_paused(), "live": bool(live_files()),
                        "engine": "2026-10-31d"}
             self._json(obj)
+        elif self.path.startswith("/publish"):
+            q = parse_qs(urlparse(self.path).query)
+            nm = (q.get("name", [""])[0] or "").strip()
+            nm = "".join(c for c in nm if c.isalnum() or c in "._- ")[:90]
+            if not nm:
+                return self._json({"ok": 0, "error": "no name"})
+            publish_bg(nm)
+            return self._json({"ok": 1, "queued": nm})
         elif self.path.startswith("/log"):
             try:
                 lines = open(BREAKLOG, encoding="utf-8", errors="replace").read().splitlines()[-60:]
@@ -606,6 +615,73 @@ def _send_live(burst):
                 pass
 
 
+GHTAG = os.environ.get("GH_LIB_TAG", "library")
+GHREPO = os.environ.get("GH_LIB_REPO", "avanderberg48-collab/mandy-radio-library")
+
+
+def gh_api(url, data=None, ctype="application/json", method=None):
+    """Tiny GitHub API helper (urllib only, works inside the free container)."""
+    tok = os.environ.get("GITHUB_TOKEN", "")
+    if not tok:
+        raise RuntimeError("no token")
+    h = {"Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json",
+         "User-Agent": "kaleidoscope-station"}
+    if ctype:
+        h["Content-Type"] = ctype
+    r = _U.Request(url, data=data, headers=h, method=method or ("POST" if data is not None else "GET"))
+    return json.load(_U.urlopen(r, timeout=180))
+
+
+def release_id():
+    d = gh_api("https://api.github.com/repos/%s/releases/tags/%s" % (GHREPO, GHTAG))
+    return d["id"], d.get("assets") or []
+
+
+def publish_song(name):
+    """Put a freshly uploaded song into the permanent public library and update the song list."""
+    p = os.path.join(MUSIC, name)
+    if not os.path.exists(p):
+        return "missing"
+    size = os.path.getsize(p)
+    if size < 20000:
+        return "too small"
+    rel, assets = release_id()
+    old = [a for a in assets if a.get("name") == name]
+    for a in old:
+        gh_api("https://api.github.com/repos/%s/releases/assets/%d" % (GHREPO, a["id"]), method="DELETE", ctype=None)
+    url = ("https://uploads.github.com/repos/%s/releases/%d/assets?name=" % (GHREPO, rel)) + _U.quote(name)
+    with open(p, "rb") as f:
+        data = f.read()
+    up = gh_api(url, data=data, ctype="audio/mpeg")
+    song_url = up.get("browser_download_url") or ""
+    # refresh the public song list so every listener can stream it
+    try:
+        cur = json.load(_U.urlopen(MANIFEST_URL, timeout=90))
+    except Exception:
+        cur = {"songs": []}
+    songs = [s for s in cur.get("songs", []) if s.get("name") != name]
+    songs.append({"name": name, "url": song_url})
+    songs.sort(key=lambda s: s.get("name", ""))
+    body = json.dumps({"songs": songs}).encode()
+    for a in assets:
+        if a.get("name") == "station_music.json":
+            gh_api("https://api.github.com/repos/%s/releases/assets/%d" % (GHREPO, a["id"]), method="DELETE", ctype=None)
+    gh_api("https://uploads.github.com/repos/%s/releases/%d/assets?name=station_music.json" % (GHREPO, rel),
+           data=body, ctype="application/json")
+    MANI["loaded"] = 0
+    blog("PUBLISHED " + name)
+    return "published"
+
+
+def publish_bg(name):
+    def go():
+        try:
+            publish_song(name)
+        except Exception as e:
+            blog("PUBLISH_ERROR %s %s" % (name, str(e)[:100]))
+    threading.Thread(target=go, daemon=True).start()
+
+
 def do_upend(j):
     """Finish an upload: join the parts, convert to mp3, drop it where it belongs."""
     import glob, shutil, subprocess
@@ -645,6 +721,8 @@ def do_upend(j):
     for pp in parts:
         try: os.remove(pp)
         except Exception: pass
+    if ok and j.get("kind") != "mic":
+        publish_bg(os.path.basename(target))
     if j.get("kind") == "mic":
         lives = sorted(glob.glob(os.path.join(LIVE, "*.mp3")), key=os.path.getmtime)
         for old in lives[:-20]:
