@@ -629,7 +629,16 @@ def gh_api(url, data=None, ctype="application/json", method=None):
     if ctype:
         h["Content-Type"] = ctype
     r = _U.Request(url, data=data, headers=h, method=method or ("POST" if data is not None else "GET"))
-    return json.load(_U.urlopen(r, timeout=180))
+    try:
+        raw = _U.urlopen(r, timeout=180).read()
+    except Exception:
+        raise
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {"raw": raw[:200].decode("utf-8", "replace")}
 
 
 def release_id():
@@ -663,11 +672,22 @@ def publish_song(name):
     songs.append({"name": name, "url": song_url})
     songs.sort(key=lambda s: s.get("name", ""))
     body = json.dumps({"songs": songs}).encode()
+    try:
+        with open(os.path.join(RADIO, "music_index_backup.json"), "wb") as f:
+            f.write(body)
+    except Exception:
+        pass
     for a in assets:
         if a.get("name") == "station_music.json":
             gh_api("https://api.github.com/repos/%s/releases/assets/%d" % (GHREPO, a["id"]), method="DELETE", ctype=None)
-    gh_api("https://uploads.github.com/repos/%s/releases/%d/assets?name=station_music.json" % (GHREPO, rel),
-           data=body, ctype="application/json")
+    for attempt in range(3):
+        try:
+            gh_api("https://uploads.github.com/repos/%s/releases/%d/assets?name=station_music.json" % (GHREPO, rel),
+                   data=body, ctype="application/json")
+            break
+        except Exception as e:
+            blog("MANIFEST_RETRY %d %s" % (attempt + 1, str(e)[:80]))
+            time.sleep(3)
     MANI["loaded"] = 0
     blog("PUBLISHED " + name)
     return "published"
