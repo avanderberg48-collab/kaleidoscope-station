@@ -1,11 +1,12 @@
 name: Keep the station awake
 
 # The free cloud host sleeps after 15 minutes without traffic, so touch it every
-# five minutes. Public repo, so these minutes cost nothing.
+# five minutes while the station is on air: 05:00 to 24:00 South African time
+# (03:00-21:59 UTC). Nothing pings between 00:00 and 05:00, so it sleeps then. Public repo, so these minutes cost nothing.
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/5 3-21 * * *"
   workflow_dispatch:
 
 jobs:
