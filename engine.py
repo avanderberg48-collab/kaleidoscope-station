@@ -527,6 +527,13 @@ play();
                        "paused": music_paused(), "live": bool(live_files()),
                        "engine": "2026-10-31d"}
             self._json(obj)
+        elif self.path.startswith("/log"):
+            try:
+                lines = open(BREAKLOG, encoding="utf-8", errors="replace").read().splitlines()[-60:]
+            except Exception:
+                lines = []
+            self._json({"now_sast": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() + 7200)),
+                        "lines": lines})
         elif self.path == "/library":
             self._json({"station": STATION, "songs": library()})
         elif self.path == "/dj":
