@@ -646,8 +646,16 @@ def release_id():
     return d["id"], d.get("assets") or []
 
 
+PUB_LOCK = threading.Lock()
+
+
 def publish_song(name):
     """Put a freshly uploaded song into the permanent public library and update the song list."""
+    with PUB_LOCK:
+        return _publish_song(name)
+
+
+def _publish_song(name):
     p = os.path.join(MUSIC, name)
     if not os.path.exists(p):
         return "missing"
@@ -665,7 +673,7 @@ def publish_song(name):
     song_url = up.get("browser_download_url") or ""
     # refresh the public song list so every listener can stream it
     try:
-        cur = json.load(_U.urlopen(MANIFEST_URL, timeout=90))
+        cur = json.load(_U.urlopen(MANIFEST_URL + "?t=%d" % int(time.time()), timeout=90))
     except Exception:
         cur = {"songs": []}
     songs = [s for s in cur.get("songs", []) if s.get("name") != name]
@@ -689,6 +697,12 @@ def publish_song(name):
             blog("MANIFEST_RETRY %d %s" % (attempt + 1, str(e)[:80]))
             time.sleep(3)
     MANI["loaded"] = 0
+    try:
+        check = json.load(_U.urlopen(MANIFEST_URL + "?t=%d" % int(time.time() + 1), timeout=90))
+        if not any(x.get("name") == name for x in check.get("songs", [])):
+            blog("PUBLISH_VERIFY_MISS " + name)
+    except Exception:
+        pass
     blog("PUBLISHED " + name)
     return "published"
 
