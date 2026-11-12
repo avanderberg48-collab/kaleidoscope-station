@@ -19,7 +19,7 @@ STORYF = RADIO + "/story.json"
 PROGF = RADIO + "/programs.json"
 BREAKD = RADIO + "/.break_done"      # one filename per line, played next
 STATION = {"name": "Kaleidoscope Online", "tagline": "Radio for blind people, in South Africa and overseas"}
-for d in (MUSIC, LIVE, INCOMING):
+for d in (MUSIC, LIVE, INCOMING, BREAKD):
     os.makedirs(d, exist_ok=True)
 
 lock = threading.Lock()
