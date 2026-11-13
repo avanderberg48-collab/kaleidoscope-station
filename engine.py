@@ -498,6 +498,24 @@ play();
                 if path.startswith(RADIO) and ".." not in path:
                     with open(path, "w") as f:
                         f.write(str(j.get("content", "")))
+            elif cmd == "delete":
+                name = str(j.get("name", "")).replace("/", "").replace("\\", "").strip()
+                if not name:
+                    return self._json({"ok": 0, "result": "NO_NAME"})
+                gone = False
+                p = os.path.join(MUSIC, name)
+                try:
+                    if os.path.exists(p):
+                        os.remove(p)
+                        gone = True
+                except Exception as e:
+                    blog("DELETE_LOCAL %s" % str(e)[:80])
+                try:
+                    unpublish_song(name)
+                    gone = True
+                except Exception as e:
+                    blog("DELETE_PUB %s" % str(e)[:80])
+                return self._json({"ok": 1, "result": "DELETE_OK" if gone else "DELETE_NOT_FOUND", "name": name})
             elif cmd == "upchunk":
                 cid = "".join(c for c in str(j.get("id", "")) if c.isalnum() or c in "_-")[:40]
                 seq = "".join(c for c in str(j.get("seq", "0")) if c.isdigit())[:6].zfill(6)
@@ -653,6 +671,30 @@ def publish_song(name):
     """Put a freshly uploaded song into the permanent public library and update the song list."""
     with PUB_LOCK:
         return _publish_song(name)
+
+
+def unpublish_song(name):
+    """Take one song out of the permanent public library and out of the song list."""
+    with PUB_LOCK:
+        rel, assets = release_id()
+        for a in assets:
+            if a.get("name") == name:
+                gh_api("https://api.github.com/repos/%s/releases/assets/%d" % (GHREPO, a["id"]),
+                       method="DELETE", ctype=None)
+        try:
+            cur = json.load(_U.urlopen(MANIFEST_URL + "?t=%d" % int(time.time()), timeout=90))
+        except Exception:
+            cur = {"songs": []}
+        songs = [x for x in cur.get("songs", []) if x.get("name") != name]
+        body = json.dumps({"songs": songs}).encode()
+        for a in assets:
+            if a.get("name") == "station_music.json":
+                gh_api("https://api.github.com/repos/%s/releases/assets/%d" % (GHREPO, a["id"]),
+                       method="DELETE", ctype=None)
+        gh_api("https://uploads.github.com/repos/%s/releases/%d/assets?name=station_music.json"
+               % (GHREPO, rel), data=body, ctype="application/json")
+        MANI["loaded"] = 0
+    return "ok"
 
 
 def _publish_song(name):
