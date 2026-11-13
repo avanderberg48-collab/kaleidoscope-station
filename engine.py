@@ -505,7 +505,7 @@ play();
                     json.dump({"shuffle": 1}, f)
             elif cmd == "playnow":
                 nm = "".join(c for c in str(j.get("name", "")) if c.isalnum() or c in " _.-").replace(" ", "_")
-                if nm and os.path.exists(os.path.join(MUSIC, nm)):
+                if nm and nm in set(library()):
                     with open(PLAYNOWF, "w") as f:
                         f.write(nm)
                     open(SKIPF, "w").close()   # cut the current song at once
@@ -530,7 +530,7 @@ play();
                 return self._json({"ok": 1, "result": "PROGRAM_FINISHED"})
             elif cmd == "playnext":
                 nm = "".join(c for c in str(j.get("name", "")) if c.isalnum() or c in " _.-").replace(" ", "_")
-                if nm and os.path.exists(os.path.join(MUSIC, nm)):
+                if nm and nm in set(library()):
                     with open(NEXTQ, "a") as f:
                         f.write(nm + "\n")
                     return self._json({"result": "QUEUED"})
