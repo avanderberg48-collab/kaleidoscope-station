@@ -13,6 +13,7 @@ NP = RADIO + "/nowplaying.txt"
 MODE = RADIO + "/mode.json"      # {"shuffle": 1}
 SKIPF = RADIO + "/skip.flag"
 NEXTQ = RADIO + "/next.txt"
+PLAYNOWF = RADIO + "/playnow.txt"   # DJ pressed "play now": jump to this song immediately
 SCHED = RADIO + "/sched.json"
 BREAKF = RADIO + "/break.json"
 STORYF = RADIO + "/story.json"
@@ -397,6 +398,22 @@ def filter_program(songs):
         return [s for s in songs if s.startswith(only)], only, until
     return songs, "", 0
 
+def take_playnow():
+    """A song the DJ told the station to play right now (it interrupts the current song)."""
+    try:
+        with open(PLAYNOWF) as f:
+            nm = f.read().strip()
+    except Exception:
+        return None
+    try:
+        os.remove(PLAYNOWF)
+    except Exception:
+        pass
+    if nm and nm in set(library()):
+        return nm
+    return None
+
+
 def take_next_queue():
     try:
         with open(NEXTQ) as f:
@@ -486,6 +503,31 @@ play();
             elif cmd == "program_off":
                 with open(MODE, "w") as f:
                     json.dump({"shuffle": 1}, f)
+            elif cmd == "playnow":
+                nm = "".join(c for c in str(j.get("name", "")) if c.isalnum() or c in " _.-").replace(" ", "_")
+                if nm and os.path.exists(os.path.join(MUSIC, nm)):
+                    with open(PLAYNOWF, "w") as f:
+                        f.write(nm)
+                    open(SKIPF, "w").close()   # cut the current song at once
+                    return self._json({"result": "PLAYNOW"})
+                return self._json({"result": "MISSING"})
+            elif cmd == "clearqueue":
+                for f in (NEXTQ, PLAYNOWF, SKIPF):
+                    try: os.remove(f)
+                    except Exception: pass
+                return self._json({"ok": 1, "result": "QUEUE_CLEARED"})
+            elif cmd == "finishprogram":
+                # the DJ is done: drop the hold, forget the queued program songs and carry on
+                # with the normal station music
+                for f in (PAUSEDF, NEXTQ, PLAYNOWF, SKIPF, RADIO + "/.lastlive"):
+                    try: os.remove(f)
+                    except Exception: pass
+                try:
+                    with open(MODE, "w") as f:
+                        json.dump({"shuffle": 1}, f)
+                except Exception:
+                    pass
+                return self._json({"ok": 1, "result": "PROGRAM_FINISHED"})
             elif cmd == "playnext":
                 nm = "".join(c for c in str(j.get("name", "")) if c.isalnum() or c in " _.-").replace(" ", "_")
                 if nm and os.path.exists(os.path.join(MUSIC, nm)):
@@ -873,7 +915,10 @@ def producer_loop():
                  and "jingo" not in s.lower() and "jingle" not in s.lower()
                  and (schedp is not None or not s.startswith("prog"))
                  and not s.startswith("stryd")]
+        now_one = take_playnow()  # "play this now" beats everything
         nxt = take_next_queue()   # what the DJ queues always gets played, block or not
+        if now_one:
+            nxt = [now_one] + [x for x in nxt if x != now_one]
         if queue:
             if schedp:
                 queue.sort()  # album block: original track order
@@ -922,7 +967,7 @@ def producer_loop():
         for s in ordered:
             # a song or playlist queued from the DJ app must play straight after this one
             try:
-                if os.path.exists(NEXTQ) and os.path.getsize(NEXTQ) > 0:
+                if os.path.exists(PLAYNOWF) or (os.path.exists(NEXTQ) and os.path.getsize(NEXTQ) > 0):
                     break
             except Exception:
                 pass
@@ -964,7 +1009,7 @@ def producer_loop():
                                 break
                             # a song or playlist queued from the DJ app takes over at once
                             try:
-                                if os.path.exists(NEXTQ) and os.path.getsize(NEXTQ) > 0:
+                                if os.path.exists(PLAYNOWF) or (os.path.exists(NEXTQ) and os.path.getsize(NEXTQ) > 0):
                                     break
                             except Exception:
                                 pass
