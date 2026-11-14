@@ -65,7 +65,7 @@ def paced_broadcast(data, br, burst):
 
 
 def pretty(s):
-    return (s[:-4].replace("gsp_EN_", "").replace("gsp_AF_", "")
+    return (s[:-4].replace("xmas_", "").replace("gsp_EN_", "").replace("gsp_AF_", "")
             .replace("prog_", "").replace("stryd_", "").replace("id_", "")
             .replace("gsp_", "").replace("_", " ").strip())
 
@@ -262,6 +262,16 @@ def sched_active():
         if s.get("prefix") and float(s.get("start", 0)) <= time.time() < float(s.get("until", 0)):
             return str(s["prefix"])
         t = time.localtime(time.time() + 7200)  # SA local time (UTC+2)
+        today = "%02d-%02d" % (t.tm_mon, t.tm_mday)
+        for r in s.get("ranges", []):
+            p = str(r.get("prefix", "")).strip()
+            if not p:
+                continue
+            start = str(r.get("from", "01-01"))
+            end = str(r.get("to", "12-31"))
+            inside = (start <= today <= end) if start <= end else (today >= start or today <= end)
+            if inside and int(r.get("start_h", 0)) <= t.tm_hour < int(r.get("end_h", 24)):
+                return p
         for b in s.get("blocks", []):
             days = b.get("days")
             if days is not None and t.tm_wday not in days:
@@ -914,6 +924,7 @@ def producer_loop():
                  and not s.startswith("ad_")
                  and "jingo" not in s.lower() and "jingle" not in s.lower()
                  and (schedp is not None or not s.startswith("prog"))
+                 and (schedp is not None or not s.startswith("xmas_"))
                  and not s.startswith("stryd")]
         now_one = take_playnow()  # "play this now" beats everything
         nxt = take_next_queue()   # what the DJ queues always gets played, block or not
