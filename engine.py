@@ -1096,6 +1096,13 @@ def producer_loop():
                         if pos % max(1, br // 8) < len(d):
                             if take_skip():
                                 break
+                            # a scheduled programme starts on the stroke of the hour, even mid-song
+                            try:
+                                if sched_active() != cur_sched:
+                                    blog("SCHED_TAKEOVER %s" % str(sched_active()))
+                                    break
+                            except Exception:
+                                pass
                             # a song or playlist queued from the DJ app takes over at once
                             try:
                                 if os.path.exists(PLAYNOWF) or (os.path.exists(NEXTQ) and os.path.getsize(NEXTQ) > 0):
