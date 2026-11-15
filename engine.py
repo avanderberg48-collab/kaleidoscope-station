@@ -782,9 +782,56 @@ def gh_api(url, data=None, ctype="application/json", method=None):
         return {"raw": raw[:200].decode("utf-8", "replace")}
 
 
+def _assets_of(rel_id):
+    """Every asset of a release (GitHub only returns 100 at a time)."""
+    out = []
+    page = 1
+    while True:
+        batch = gh_api("https://api.github.com/repos/%s/releases/%d/assets?per_page=100&page=%d"
+                       % (GHREPO, rel_id, page))
+        if not isinstance(batch, list) or not batch:
+            break
+        out += batch
+        if len(batch) < 100:
+            break
+        page += 1
+    return out
+
+
+def _library_releases():
+    rels = gh_api("https://api.github.com/repos/%s/releases?per_page=100" % GHREPO)
+    libs = [r for r in rels if str(r.get("tag_name", "")).startswith(GHTAG)]
+    libs.sort(key=lambda r: r.get("created_at", ""))
+    return libs
+
+
+def manifest_release():
+    """The release that holds the public song list (station_music.json)."""
+    for r in _library_releases():
+        if r.get("tag_name") == GHTAG:
+            return r["id"]
+    libs = _library_releases()
+    return libs[0]["id"] if libs else create_library_release()
+
+
+def create_library_release():
+    n = len(_library_releases()) + 1
+    body = json.dumps({"tag_name": "%s%d" % (GHTAG, n),
+                       "name": "Kaleidoscope library part %d" % n,
+                       "body": "Extra room for the station library."}).encode()
+    d = gh_api("https://api.github.com/repos/%s/releases" % GHREPO, data=body, method="POST")
+    blog("NEW_LIBRARY_RELEASE %s" % d.get("tag_name"))
+    return d["id"]
+
+
 def release_id():
-    d = gh_api("https://api.github.com/repos/%s/releases/tags/%s" % (GHREPO, GHTAG))
-    return d["id"], d.get("assets") or []
+    """A library release that still has room for another song (GitHub caps one release at 1000)."""
+    for r in reversed(_library_releases()):
+        assets = _assets_of(r["id"])
+        if len(assets) < 985:
+            return r["id"], assets
+    rel = create_library_release()
+    return rel, []
 
 
 PUB_LOCK = threading.Lock()
@@ -867,12 +914,13 @@ def _publish_song(name):
             f.write(body)
     except Exception:
         pass
-    for a in assets:
+    mrel = manifest_release()
+    for a in _assets_of(mrel):
         if a.get("name") == "station_music.json":
             gh_api("https://api.github.com/repos/%s/releases/assets/%d" % (GHREPO, a["id"]), method="DELETE", ctype=None)
     for attempt in range(3):
         try:
-            gh_api("https://uploads.github.com/repos/%s/releases/%d/assets?name=station_music.json" % (GHREPO, rel),
+            gh_api("https://uploads.github.com/repos/%s/releases/%d/assets?name=station_music.json" % (GHREPO, mrel),
                    data=body, ctype="application/json")
             break
         except Exception as e:
