@@ -226,6 +226,58 @@ def mic_recent(window=8):
         return False
 
 
+
+# ---------- durable DJ hold: the music must never come back during a live programme ----------
+_STATE_URL = "https://superagent-269bfe30.base44.app/functions/stationPlaylists"
+_dj_last = {"on": None, "at": 0.0}
+
+
+def _dj_state(timeout=5):
+    try:
+        req = _U.Request(_STATE_URL, data=json.dumps({"action": "djstate"}).encode(),
+                         headers={"Content-Type": "application/json"})
+        js = json.loads(_U.urlopen(req, timeout=timeout).read())
+        return bool(js.get("hold")), str(js.get("ts") or "")
+    except Exception:
+        return None, ""
+
+
+def _dj_push(on):
+    """Remember the hold in the cloud database, so a restart cannot leak music."""
+    on = bool(on)
+    now = time.time()
+    if _dj_last["on"] == on and (now - _dj_last["at"]) < 30:
+        return
+    _dj_last["on"] = on
+    _dj_last["at"] = now
+
+    def run():
+        try:
+            req = _U.Request(_STATE_URL, data=json.dumps({"action": "djhold", "on": on}).encode(),
+                             headers={"Content-Type": "application/json"})
+            _U.urlopen(req, timeout=8).read()
+        except Exception:
+            pass
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _dj_restore():
+    """Called once at start-up: if a hold was set recently, honour it again."""
+    hold, ts = _dj_state()
+    if not hold or not ts:
+        return False
+    try:
+        age = time.time() - time.mktime(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")) - time.timezone
+    except Exception:
+        age = 0
+    if age < 0 or age > 1800:
+        return False
+    try:
+        open(PAUSEDF, "w").close()
+    except Exception:
+        return False
+    return True
+
 def music_paused():
     try:
         return os.path.exists(PAUSEDF)
@@ -502,7 +554,9 @@ play();
         try:
             if cmd == "pause":
                 open(PAUSEDF, "w").close()
+                _dj_push(True)
             elif cmd == "resume":
+                _dj_push(False)
                 for f in (PAUSEDF, RADIO + "/.lastlive"):
                     try: os.remove(f)
                     except Exception: pass
@@ -1058,6 +1112,11 @@ def producer_loop():
 
 if __name__ == "__main__":
     save_np()
+    try:
+        if _dj_restore():
+            print("DJ hold restored from the database: music stays out")
+    except Exception:
+        pass
     threading.Thread(target=producer_loop, daemon=True).start()
     ThreadingHTTPServer.allow_reuse_address = True
     srv = ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", 8000))), Handler)
