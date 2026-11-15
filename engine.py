@@ -605,6 +605,17 @@ play();
                         f.write(nm + "\n")
                     return self._json({"result": "QUEUED"})
                 return self._json({"result": "MISSING"})
+            elif cmd == "sched":
+                # read or replace the programme schedule (used by the DJ app and by Mandy)
+                try:
+                    if j.get("content") is not None:
+                        with open(SCHED, "w") as f:
+                            f.write(str(j.get("content")))
+                    body = open(SCHED).read()
+                except Exception:
+                    body = ""
+                return self._json({"ok": 1, "radio": RADIO, "sched": body,
+                                   "active": sched_active()})
             elif cmd == "write":
                 path = str(j.get("path", ""))
                 if path.startswith(RADIO) and ".." not in path:
@@ -656,7 +667,7 @@ play();
             with lock:
                 obj = {"song": now_playing["song"], "listeners": now_playing["listeners"],
                        "paused": music_paused(), "live": bool(live_files()),
-                       "engine": "2026-10-31d"}
+                       "engine": "2026-10-31d", "sched": sched_active() or ""}
             self._json(obj)
         elif self.path.startswith("/publish"):
             q = parse_qs(urlparse(self.path).query)
