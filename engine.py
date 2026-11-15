@@ -823,7 +823,24 @@ def _publish_song(name):
     url = ("https://uploads.github.com/repos/%s/releases/%d/assets?name=" % (GHREPO, rel)) + _U.quote(name)
     with open(p, "rb") as f:
         data = f.read()
-    up = gh_api(url, data=data, ctype="audio/mpeg")
+    up = None
+    for attempt in range(4):
+        try:
+            up = gh_api(url, data=data, ctype="audio/mpeg")
+            break
+        except Exception as e:
+            blog("ASSET_RETRY %d %s %s" % (attempt + 1, name, str(e)[:60]))
+            time.sleep(2 + attempt * 2)
+            try:                                  # clear a half-created asset and try again
+                rel2, assets2 = release_id()
+                for a in assets2:
+                    if a.get("name") == name:
+                        gh_api("https://api.github.com/repos/%s/releases/assets/%d" % (GHREPO, a["id"]),
+                               method="DELETE", ctype=None)
+            except Exception:
+                pass
+    if up is None:
+        raise RuntimeError("asset upload failed for " + name)
     song_url = up.get("browser_download_url") or ""
     # refresh the public song list so every listener can stream it
     try:
