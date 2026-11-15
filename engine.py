@@ -208,11 +208,12 @@ def live_files():
     except Exception:
         return []
 
+START_TS = time.time()
 PAUSEDF = RADIO + "/.paused"
 LASTLIVE = RADIO + "/.lastlive"
 SILENCE = MUSIC + "/silence.mp3"
 
-def mic_programme(window=120):
+def mic_programme(window=300):
     """True while the DJ's programme is running, allowing for gaps in the microphone."""
     return mic_recent(window)
 
@@ -872,7 +873,7 @@ def producer_loop():
     while True:
         # DJ hold mode: music paused, mic (if live) plays, silence otherwise.
         # mic_programme keeps a long talking programme safe through quiet gaps.
-        if music_paused() or mic_programme():
+        if music_paused() or mic_programme() or (time.time() - START_TS) < 12:
             if live_files():
                 _send_live(burst)
             else:
@@ -887,7 +888,7 @@ def producer_loop():
                     slicebytes = max(2048, int(br / 16))  # about a quarter of a second
                     total = os.path.getsize(SILENCE)
                     pos = 0
-                    while music_paused() or mic_programme():
+                    while music_paused() or mic_programme() or (time.time() - START_TS) < 12:
                         if live_files():
                             _send_live(burst)
                             pos = 0
