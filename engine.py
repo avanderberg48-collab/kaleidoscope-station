@@ -374,7 +374,7 @@ def take_break():
         for i, br in enumerate(breaks or []):
             at = float(br.get("at", 0))
             files = br.get("files") or []
-            mk = "%s_%d" % (BREAKD, i)
+            mk = "%s_%d_%d" % (BREAKD, i, int(at))
             if files and at <= now < at + 1800 and not os.path.exists(mk):
                 open(mk, "w").write(str(now))
                 return [f for f in files if f in lib]
@@ -1286,6 +1286,13 @@ def producer_loop():
             try:
                 for b in (take_break() or []):
                     blog("BREAK_ONAIR " + b)
+                    _send_live(burst)
+                    play_one(b)
+            except Exception:
+                pass
+            try:
+                for b in (news_due() or []):
+                    blog("NEWS_ONAIR " + b)
                     _send_live(burst)
                     play_one(b)
             except Exception:
