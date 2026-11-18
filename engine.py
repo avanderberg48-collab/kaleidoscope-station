@@ -457,6 +457,163 @@ def programs_due():
     except Exception:
         return []
 
+
+# ---------- hourly news bulletins (weekdays, Afrikaans then English) ----------
+NEWS_HOURS = [6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+
+def _sast():
+    return time.localtime(time.time() + 7200)
+
+def news_file(hour):
+    return "prog_news_%02d.mp3" % int(hour)
+
+def news_due():
+    """Play this hour's bulletin once a day, weekdays, in the first 25 minutes."""
+    try:
+        t = _sast()
+        if t.tm_wday >= 5 or t.tm_hour not in NEWS_HOURS or t.tm_min >= 25:
+            return []
+        f = news_file(t.tm_hour)
+        if f not in set(library()):
+            return []
+        mk = "%s_news_%s_%d-%02d-%02d" % (BREAKD, f, t.tm_year, t.tm_mon, t.tm_mday)
+        if os.path.exists(mk):
+            return []
+        open(mk, "w").write(str(time.time()))
+        blog("NEWS_PLAY " + f)
+        return [f]
+    except Exception as e:
+        blog("NEWS_DUE_ERROR " + str(e)[:120])
+        return []
+
+def _rss(u, limit):
+    import re as _r, html as _h
+    req = _U.Request(u, headers={"User-Agent": "Mozilla/5.0"})
+    raw = _U.urlopen(req, timeout=25).read().decode("utf-8", "replace")
+    out = []
+    for it in _r.findall(r"<item>(.*?)</item>", raw, _r.S)[:12]:
+        tt = _r.search(r"<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>", it, _r.S)
+        dd = _r.search(r"<description>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</description>", it, _r.S)
+        if not tt:
+            continue
+        title = _h.unescape(_r.sub("<[^>]+>", "", tt.group(1))).strip()
+        desc = _h.unescape(_r.sub("<[^>]+>", "", dd.group(1))) if dd else ""
+        desc = _r.sub(r"\s+", " ", desc).strip()
+        out.append((title, desc))
+        if len(out) >= limit:
+            break
+    return out
+
+def _weather():
+    city = os.environ.get("WEATHER_CITY", "Johannesburg")
+    lat = os.environ.get("WEATHER_LAT", "-26.2041")
+    lon = os.environ.get("WEATHER_LON", "28.0473")
+    u = ("https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s"
+         "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+         "&timezone=Africa%%2FJohannesburg&forecast_days=2" % (lat, lon))
+    w = json.loads(_U.urlopen(_U.Request(u, headers={"User-Agent": "Mozilla/5.0"}), timeout=25).read().decode())
+    d = w["daily"]
+    return (city, round(d["temperature_2m_max"][0]), round(d["temperature_2m_min"][0]),
+            int(d["precipitation_probability_max"][0] or 0),
+            round(d["temperature_2m_max"][1]), round(d["temperature_2m_min"][1]))
+
+def _news_en_text():
+    stories = _rss("https://www.sabcnews.com/sabcnews/feed/", 4) + _rss("https://www.iol.co.za/rss?l=news", 3)
+    t = _sast()
+    en_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    en_months = ["January", "February", "March", "April", "May", "June", "July",
+                 "August", "September", "October", "November", "December"]
+    parts = ["Kaleidoscope News. Good day, this is your news bulletin for %s, the %d %s."
+             % (en_days[t.tm_wday], t.tm_mday, en_months[t.tm_mon - 1])]
+    for title, desc in stories:
+        first = desc.split(". ")[0].strip().rstrip(".")
+        parts.append(title + ". " + first + "." if first and first.lower() != title.lower() else title + ".")
+    try:
+        c, mx, mn, rain, mx2, mn2 = _weather()
+        parts.append("Weather. In %s today, a high of %d and a low of %d, with a %d percent chance of rain. "
+                     "Tomorrow, a high of %d and a low of %d." % (c, mx, mn, rain, mx2, mn2))
+    except Exception as e:
+        blog("NEWS_WEATHER_ERROR " + str(e)[:100])
+    parts.append("That was the Kaleidoscope news. Stay with us.")
+    return " ".join(parts)
+
+def _split_text(text, size=1400):
+    import re as _r
+    out, cur = [], ""
+    for s in _r.split(r"(?<=[.!?])\s+", text):
+        if len(cur) + len(s) < size:
+            cur += (" " if cur else "") + s
+        else:
+            if cur:
+                out.append(cur)
+            cur = s
+    if cur:
+        out.append(cur)
+    return out
+
+def _to_afrikaans(text):
+    import urllib.parse as _up
+    parts = []
+    for c in _split_text(text):
+        for _try in range(4):
+            try:
+                data = _up.urlencode({"client": "gtx", "sl": "en", "tl": "af", "dt": "t", "q": c}).encode()
+                r = _U.urlopen(_U.Request("https://translate.googleapis.com/translate_a/single", data=data,
+                                          headers={"User-Agent": "Mozilla/5.0"}), timeout=40)
+                j = json.loads(r.read().decode())
+                parts.append("".join(p[0] for p in j[0] if p[0]))
+                break
+            except Exception:
+                time.sleep(4)
+    return " ".join(parts)
+
+def _tts(text, voice, path, rate="0%"):
+    import subprocess
+    txt = RADIO + "/.tts_src.txt"
+    with open(txt, "w") as f:
+        f.write(text)
+    subprocess.run(["python3", "-m", "edge_tts", "--voice", voice, "--rate=" + rate,
+                    "--file", txt, "--write-media", path], timeout=600, check=True)
+
+def make_bulletin(hour):
+    """Build the Afrikaans and English bulletin and store it as this hour's file."""
+    name = news_file(hour)
+    dest = os.path.join(MUSIC, name)
+    tmp = RADIO + "/incoming/_news"
+    os.makedirs(tmp, exist_ok=True)
+    en = _news_en_text()
+    af = _to_afrikaans(en)
+    af = af.replace("Kaleidoskoop Nuus", "Kaleidoscope Nuus").replace("Kaleidoscope-nuus", "Kaleidoscope Nuus")
+    enp = tmp + "/en.mp3"
+    afp = tmp + "/af.mp3"
+    _tts(af, "af-ZA-AdriNeural", afp, "-2%")
+    _tts(en, "en-ZA-LeahNeural", enp, "+2%")
+    import subprocess
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", afp, "-i", enp,
+                    "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1[o]", "-map", "[o]",
+                    "-c:a", "libmp3lame", "-b:a", "64k", dest + ".tmp.mp3"], timeout=600, check=True)
+    os.replace(dest + ".tmp.mp3", dest)
+    try:
+        publish_song(name)
+    except Exception as e:
+        blog("NEWS_PUBLISH_ERROR " + str(e)[:100])
+    blog("NEWS_BUILT " + name)
+
+def news_worker():
+    """Fifty minutes past each weekday hour, prepare the next hour's bulletin."""
+    while True:
+        try:
+            t = _sast()
+            nxt = (t.tm_hour + 1) % 24
+            if t.tm_wday < 5 and t.tm_min >= 50 and nxt in NEWS_HOURS:
+                mk = "%s_newsgen_%d_%d-%02d-%02d_%02d" % (BREAKD, 0, t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour)
+                if not os.path.exists(mk):
+                    open(mk, "w").write(str(time.time()))
+                    make_bulletin(nxt)
+        except Exception as e:
+            blog("NEWS_GEN_ERROR " + str(e)[:150])
+        time.sleep(60)
+
 def filter_program(songs):
     """During a scheduled program (e.g. gospel), play only matching songs."""
     m = radio_mode()
@@ -1096,7 +1253,7 @@ def producer_loop():
                 pass
 
         cur_sched = schedp
-        ordered = take_break() + list(nxt)
+        ordered = take_break() + news_due() + list(nxt)
         for i, s in enumerate(queue):
             ordered.append(s)
             n = i + 1
@@ -1201,6 +1358,7 @@ if __name__ == "__main__":
     except Exception:
         pass
     threading.Thread(target=producer_loop, daemon=True).start()
+    threading.Thread(target=news_worker, daemon=True).start()
     ThreadingHTTPServer.allow_reuse_address = True
     srv = ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", 8000))), Handler)
     srv.daemon_threads = True
