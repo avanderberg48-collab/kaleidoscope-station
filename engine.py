@@ -14,13 +14,15 @@ MODE = RADIO + "/mode.json"      # {"shuffle": 1}
 SKIPF = RADIO + "/skip.flag"
 NEXTQ = RADIO + "/next.txt"
 PLAYNOWF = RADIO + "/playnow.txt"   # DJ pressed "play now": jump to this song immediately
+DROPS = RADIO + "/drops"           # voice notes recorded in the DJ app, played once
+DROPQ = RADIO + "/drops.txt"       # queue: one filename per line
 SCHED = RADIO + "/sched.json"
 BREAKF = RADIO + "/break.json"
 STORYF = RADIO + "/story.json"
 PROGF = RADIO + "/programs.json"
 BREAKD = RADIO + "/.break_done"      # one filename per line, played next
 STATION = {"name": "Kaleidoscope Online", "tagline": "Radio for blind people, in South Africa and overseas"}
-for d in (MUSIC, LIVE, INCOMING, BREAKD):
+for d in (MUSIC, LIVE, INCOMING, BREAKD, DROPS):
     os.makedirs(d, exist_ok=True)
 
 lock = threading.Lock()
@@ -652,6 +654,34 @@ def take_next_queue():
     lib = set(library())
     return [l for l in lines if l in lib]
 
+def take_drop():
+    """A voice note the DJ recorded and sent: it plays once, right after the current song."""
+    try:
+        with open(DROPQ) as f:
+            lines = [l.strip() for l in f if l.strip()]
+    except Exception:
+        return None
+    if not lines:
+        return None
+    first, rest = lines[0], lines[1:]
+    try:
+        with open(DROPQ, "w") as f:
+            f.write("\n".join(rest))
+    except Exception:
+        pass
+    p = os.path.join(DROPS, first)
+    return p if os.path.exists(p) else None
+
+
+def queue_drop(name):
+    try:
+        with open(DROPQ, "a") as f:
+            f.write(name + "\n")
+        return True
+    except Exception:
+        return False
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -693,6 +723,21 @@ play();
         u = urlparse(self.path)
         n = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(n) if n else b""
+        if u.path == "/voicedrop":
+            q = parse_qs(u.query)
+            name = (q.get("name", [""])[0] or "").strip()
+            name = "".join(c for c in name if c.isalnum() or c in "._- ")[:80]
+            if not name:
+                name = "drop_%d.mp3" % int(time.time())
+            if not name.lower().endswith((".mp3", ".m4a", ".aac", ".wav")):
+                name += ".mp3"
+            dest = os.path.join(DROPS, name)
+            with open(dest, "wb") as f:
+                f.write(body)
+            ok = queue_drop(name)
+            blog("VOICEDROP " + name + " " + str(len(body)))
+            return self._json({"ok": 1 if ok else 0, "queued": name, "size": len(body),
+                               "plays": "once, after the current song"})
         if u.path == "/upload":
             q = parse_qs(u.query)
             name = (q.get("name", ["upload.mp3"])[0] or "upload.mp3")
@@ -1270,6 +1315,27 @@ def producer_loop():
                 ordered.append(ids[jingle_i[0] % len(ids)])
                 jingle_i[0] += 1
         for s in ordered:
+            # a voice note from the DJ app plays once, right after the song that just finished
+            dr = take_drop()
+            if dr:
+                try:
+                    with lock:
+                        now_playing["song"] = "Voice message from the DJ"
+                        save_np()
+                    br = bitrate_of(dr)
+                    amount = max(2048, int(br / 4))
+                    with open(dr, "rb") as f:
+                        while True:
+                            d = f.read(amount)
+                            if not d:
+                                break
+                            paced_broadcast(d, br, burst)
+                except Exception:
+                    pass
+                try:
+                    os.remove(dr)
+                except Exception:
+                    pass
             # a song or playlist queued from the DJ app must play straight after this one
             try:
                 if os.path.exists(PLAYNOWF) or (os.path.exists(NEXTQ) and os.path.getsize(NEXTQ) > 0):
