@@ -1330,9 +1330,6 @@ def producer_loop():
                             if not d:
                                 break
                             paced_broadcast(d, br, burst)
-                except Exception:
-                    pass
-                try:
                     os.remove(dr)
                 except Exception:
                     pass
