@@ -17,7 +17,7 @@ jobs:
         run: |
           set -e
           for i in 1 2 3; do
-            code=$(curl -s -o /tmp/np.json -w "%{http_code}" --max-time 90 https://kaleidoscope-online-buoh.onrender.com/np || true)
+            code=$(curl -s -o /tmp/np.json -w "%{http_code}" --max-time 90 https://kaleidoscope-online-za3k.onrender.com/np || true)
             echo "attempt $i -> HTTP $code"
             if [ "$code" = "200" ]; then
               cat /tmp/np.json
