@@ -724,6 +724,21 @@ play();
         u = urlparse(self.path)
         n = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(n) if n else b""
+        if u.path == "/phonechunk":
+            # live audio straight from the DJ's phone: one small MP3 slice at a time
+            if body:
+                nm = "pchunk_%013d.mp3" % int(time.time() * 1000)
+                try:
+                    with open(os.path.join(LIVE, nm), "wb") as f:
+                        f.write(body)
+                except Exception:
+                    pass
+            return self._json({"ok": 1, "pending": len(live_files())})
+        if u.path == "/phoneoff":
+            for f in live_files():
+                try: os.remove(f)
+                except Exception: pass
+            return self._json({"ok": 1})
         if u.path == "/voicedrop":
             q = parse_qs(u.query)
             name = (q.get("name", [""])[0] or "").strip()
