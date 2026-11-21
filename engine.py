@@ -655,6 +655,16 @@ def take_next_queue():
     lib = set(library())
     return [l for l in lines if l in lib]
 
+def phone_state():
+    """What the DJ app last reported: playing, paused, mic or off."""
+    try:
+        with open(RADIO + "/phone_state.json") as f:
+            j = json.load(f)
+        return str(j.get("mode", "")), float(j.get("at", 0) or 0)
+    except Exception:
+        return "", 0.0
+
+
 def take_drop():
     """A voice note the DJ recorded and sent: it plays once, right after the current song."""
     try:
@@ -724,6 +734,15 @@ play();
         u = urlparse(self.path)
         n = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(n) if n else b""
+        if u.path == "/phonestate":
+            q = parse_qs(u.query)
+            mode = (q.get("mode", [""])[0] or "")[:20]
+            try:
+                with open(RADIO + "/phone_state.json", "w") as f:
+                    json.dump({"mode": mode, "at": time.time()}, f)
+            except Exception:
+                pass
+            return self._json({"ok": 1, "mode": mode})
         if u.path == "/phonechunk":
             # live audio straight from the DJ's phone: one small MP3 slice at a time
             if body:
@@ -1228,9 +1247,14 @@ def producer_loop():
                     save_np()
                 _send_live(burst)
             else:
+                mode, at = phone_state()
+                if at and (time.time() - at) < 150:
+                    label = "DJ is on air - music paused" if mode == "paused" else "DJ is on air - quiet"
+                else:
+                    label = "Station offline - the DJ is not broadcasting"
                 with lock:
-                    if now_playing["song"] != "Station offline - the DJ is not broadcasting":
-                        now_playing["song"] = "Station offline - the DJ is not broadcasting"
+                    if now_playing["song"] != label:
+                        now_playing["song"] = label
                         save_np()
                 make_silence()
                 try:
