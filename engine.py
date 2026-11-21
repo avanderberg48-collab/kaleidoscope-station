@@ -22,6 +22,7 @@ STORYF = RADIO + "/story.json"
 PROGF = RADIO + "/programs.json"
 BREAKD = RADIO + "/.break_done"      # one filename per line, played next
 STATION = {"name": "Kaleidoscope Online", "tagline": "Radio for blind people, in South Africa and overseas"}
+PHONE_ONLY = os.environ.get("PHONE_ONLY", "1") == "1"   # the DJ's phone is the only source
 for d in (MUSIC, LIVE, INCOMING, BREAKD, DROPS):
     os.makedirs(d, exist_ok=True)
 
@@ -1203,6 +1204,34 @@ def producer_loop():
     last_ad = [""]
     jingle_i = [0]
     while True:
+        # ---- PHONE ONLY: the station is just the DJ's phone. No cloud music, no programmes.
+        # On air only while the phone keeps sending audio; otherwise it says so and sends silence.
+        if PHONE_ONLY:
+            if live_files():
+                with lock:
+                    now_playing["song"] = "Live from the DJ's phone"
+                    save_np()
+                _send_live(burst)
+            else:
+                with lock:
+                    if now_playing["song"] != "Station offline - the DJ is not broadcasting":
+                        now_playing["song"] = "Station offline - the DJ is not broadcasting"
+                        save_np()
+                make_silence()
+                try:
+                    br = bitrate_of(SILENCE)
+                    slicebytes = max(2048, int(br / 16))
+                    with open(SILENCE, "rb") as f:
+                        while True:
+                            if live_files():
+                                break
+                            d = f.read(slicebytes)
+                            if not d:
+                                break
+                            paced_broadcast(d, br, burst)
+                except Exception:
+                    time.sleep(0.5)
+            continue
         # DJ hold mode: music paused, mic (if live) plays, silence otherwise.
         # mic_programme keeps a long talking programme safe through quiet gaps.
         if music_paused() or mic_programme() or (time.time() - START_TS) < 12:
