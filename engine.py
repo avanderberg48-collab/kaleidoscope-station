@@ -59,6 +59,20 @@ def broadcast(data):
         for c in dead:
             CLIENTS.discard(c)
 
+def drop_all_clients():
+    """Disconnect every listener. Used when the DJ is off air so no data is sent at all."""
+    with CLIENTS_LOCK:
+        for c in list(CLIENTS):
+            c.dead = True
+            try:
+                while True:
+                    c.q.get_nowait()
+            except Exception:
+                pass
+        CLIENTS.clear()
+    with lock:
+        now_playing["listeners"] = 0
+
 def paced_broadcast(data, br, burst):
     broadcast(data)
     if burst[0] > 0:
@@ -753,6 +767,9 @@ play();
                 except Exception:
                     pass
             return self._json({"ok": 1, "pending": len(live_files())})
+        if u.path == "/droplisteners":
+            drop_all_clients()
+            return self._json({"ok": 1, "listeners": 0})
         if u.path == "/phoneoff":
             for f in live_files():
                 try: os.remove(f)
@@ -1248,7 +1265,8 @@ def producer_loop():
                 _send_live(burst)
             else:
                 mode, at = phone_state()
-                if at and (time.time() - at) < 150:
+                onair = bool(at) and (time.time() - at) < 150
+                if onair:
                     label = "DJ is on air - music paused" if mode == "paused" else "DJ is on air - quiet"
                 else:
                     label = "Station offline - the DJ is not broadcasting"
@@ -1256,6 +1274,13 @@ def producer_loop():
                     if now_playing["song"] != label:
                         now_playing["song"] = label
                         save_np()
+                if not onair:
+                    # Fully off air: send nothing. No silence stream means no bandwidth
+                    # and no wake traffic, so the free host can sleep and stay inside its hours.
+                    if client_count():
+                        drop_all_clients()
+                    time.sleep(2.0)
+                    continue
                 make_silence()
                 try:
                     br = bitrate_of(SILENCE)
