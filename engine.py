@@ -59,6 +59,14 @@ def broadcast(data):
         for c in dead:
             CLIENTS.discard(c)
 
+def dj_on_air():
+    """True while the DJ's phone is actually broadcasting (live audio or a recent pause)."""
+    try:
+        mode, at = phone_state()
+        return bool(at) and (time.time() - at) < 150
+    except Exception:
+        return False
+
 def drop_all_clients():
     """Disconnect every listener. Used when the DJ is off air so no data is sent at all."""
     with CLIENTS_LOCK:
@@ -921,7 +929,7 @@ play();
             with lock:
                 obj = {"song": now_playing["song"], "listeners": now_playing["listeners"],
                        "paused": music_paused(), "live": bool(live_files()),
-                       "engine": "2026-10-31d", "sched": sched_active() or ""}
+                       "engine": "2026-11-22-offair", "sched": sched_active() or ""}
             self._json(obj)
         elif self.path.startswith("/publish"):
             q = parse_qs(urlparse(self.path).query)
@@ -951,6 +959,17 @@ play();
                         "live_waiting": len(live_files()),
                         "listeners": now_playing["listeners"]})
         elif self.path.startswith("/stream"):
+            # Off air: refuse the stream instead of sending endless silence, so a player
+            # that keeps retrying costs almost nothing and the host can go to sleep.
+            if PHONE_ONLY and not live_files() and not dj_on_air():
+                body = b"Station offline - the DJ is not broadcasting"
+                self.send_response(503)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+                return
             self.send_response(200)
             self.send_header("Content-Type", "audio/mpeg")
             self.send_header("Cache-Control", "no-store")
