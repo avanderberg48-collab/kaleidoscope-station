@@ -1018,8 +1018,6 @@ def _send_live(burst):
             # its one minute of silence before the music comes back.
             if HYBRID:
                 PHONE_WAS_LIVE[0] = True
-                if not PHONE_END_TS[0]:
-                    PHONE_END_TS[0] = time.time()
             return
         try:
             open(LASTLIVE, "w").close()
@@ -1037,7 +1035,6 @@ def _send_live(burst):
                     if not d:
                         break
                     paced_broadcast(d, br, burst)
-                    if HYBRID and PHONE_END_TS[0]: break
             try:
                 os.remove(lv)
             except Exception:
@@ -1294,7 +1291,6 @@ def stream_silence(burst, seconds=0.6):
             data = f.read(slicebytes * left)
         for i in range(0, len(data), slicebytes):
             paced_broadcast(data[i:i + slicebytes], br, burst)
-            if HYBRID and PHONE_END_TS[0]: break
     except Exception:
         time.sleep(0.2)
 
@@ -1372,7 +1368,6 @@ def producer_loop():
                             if not d:
                                 break
                             paced_broadcast(d, br, burst)
-                            if HYBRID and PHONE_END_TS[0]: break
                 except Exception:
                     time.sleep(0.5)
             continue
@@ -1408,7 +1403,6 @@ def producer_loop():
                             continue
                         pos += len(d)
                         paced_broadcast(d, br, burst)
-                        if HYBRID and PHONE_END_TS[0]: break
                 except Exception:
                     pass
             continue
@@ -1468,7 +1462,6 @@ def producer_loop():
                         if not d:
                             break
                         paced_broadcast(d, br, burst)
-                        if HYBRID and PHONE_END_TS[0]: break
             except Exception:
                 pass
 
@@ -1505,7 +1498,6 @@ def producer_loop():
                             if not d:
                                 break
                             paced_broadcast(d, br, burst)
-                            if HYBRID and PHONE_END_TS[0]: break
                     os.remove(dr)
                 except Exception:
                     pass
@@ -1555,7 +1547,6 @@ def producer_loop():
                             break
                         pos = f.tell()
                         paced_broadcast(d, br, burst)
-                        if HYBRID and PHONE_END_TS[0]: break
                         if pos % max(1, br // 8) < len(d):
                             if take_skip():
                                 break
