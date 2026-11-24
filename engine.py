@@ -937,7 +937,7 @@ play();
             with lock:
                 obj = {"song": now_playing["song"], "listeners": now_playing["listeners"],
                        "paused": music_paused(), "live": bool(live_files()),
-                       "engine": "2026-11-22-offair", "sched": sched_active() or ""}
+                       "engine": "2026-11-24-hybrid", "sched": sched_active() or ""}
             self._json(obj)
         elif self.path.startswith("/publish"):
             q = parse_qs(urlparse(self.path).query)
