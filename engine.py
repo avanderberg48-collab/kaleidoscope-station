@@ -608,6 +608,33 @@ def _tts(text, voice, path, rate="0%"):
     subprocess.run(["python3", "-m", "edge_tts", "--voice", voice, "--rate=" + rate,
                     "--file", txt, "--write-media", path], timeout=600, check=True)
 
+
+POOL_URL = os.environ.get("VOICE_POOL_URL", "https://superagent-269bfe30.base44.app/functions/voicePool")
+
+def pool_tts(text, voice, lang, path):
+    """Speak with one of Adrian's own Fish Audio voices (the voicePool function)."""
+    import urllib.parse as _up
+    q = _up.urlencode({"text": text, "voice": voice, "lang": lang})
+    r = _U.urlopen(POOL_URL + "?" + q, timeout=240)
+    data = r.read()
+    if len(data) < 2000:
+        raise RuntimeError("pool audio too small")
+    with open(path, "wb") as f:
+        f.write(data)
+
+def say_text(text, kind, path, fallback_voice, fallback_rate="0%"):
+    """POOL_TTS: kind is af-news, en-news, book or space. Falls back to edge-tts."""
+    pick = {"af-news": ("af-annalene", "af"), "en-news": ("en-radio", "en"),
+            "book": ("af-annalene", "af"), "space": ("af-jeugdig", "af"),
+            "story": ("af-manlik-3", "af")}.get(kind, ("af-annalene", "af"))
+    try:
+        pool_tts(text, pick[0], pick[1], path)
+        blog("POOL_TTS_OK %s %s" % (kind, pick[0]))
+        return
+    except Exception as e:
+        blog("POOL_TTS_FALLBACK %s %s" % (kind, str(e)[:80]))
+    _tts(text, fallback_voice, path, fallback_rate)
+
 def make_bulletin(hour):
     """Build the Afrikaans and English bulletin and store it as this hour's file."""
     name = news_file(hour)
@@ -619,8 +646,8 @@ def make_bulletin(hour):
     af = af.replace("Kaleidoskoop Nuus", "Kaleidoscope Nuus").replace("Kaleidoscope-nuus", "Kaleidoscope Nuus")
     enp = tmp + "/en.mp3"
     afp = tmp + "/af.mp3"
-    _tts(af, "af-ZA-AdriNeural", afp, "-2%")
-    _tts(en, "en-ZA-LeahNeural", enp, "+2%")
+    say_text(af, "af-news", afp, "af-ZA-AdriNeural", "-2%")
+    say_text(en, "en-news", enp, "en-ZA-LeahNeural", "+2%")
     import subprocess
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", afp, "-i", enp,
                     "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1[o]", "-map", "[o]",
