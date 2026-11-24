@@ -23,6 +23,14 @@ PROGF = RADIO + "/programs.json"
 BREAKD = RADIO + "/.break_done"      # one filename per line, played next
 STATION = {"name": "Kaleidoscope Online", "tagline": "Radio for blind people, in South Africa and overseas"}
 PHONE_ONLY = os.environ.get("PHONE_ONLY", "1") == "1"   # the DJ's phone is the only source
+# 24 Nov 2026: HYBRID mode - the station plays its own music and programmes, and the
+# DJ's phone takes over the moment it comes online. When the phone stops: 60 seconds of
+# silence, then the station music comes back by itself.
+HYBRID = os.environ.get("HYBRID", "1") == "1"
+if HYBRID:
+    PHONE_ONLY = False
+PHONE_END_TS = [0.0]     # when the phone last stopped sending audio
+PHONE_WAS_LIVE = [False]  # was the DJ live just before this moment
 for d in (MUSIC, LIVE, INCOMING, BREAKD, DROPS):
     os.makedirs(d, exist_ok=True)
 
@@ -1268,12 +1276,56 @@ def do_upend(j):
     return {"ok": 1 if ok else 0, "saved": os.path.basename(target), "result": "UPLOAD_OK" if ok else "UPLOAD_FAIL"}
 
 
+def stream_silence(burst, seconds=0.6):
+    """Send a short slice of silence so the stream stays alive without a gap."""
+    try:
+        make_silence()
+        br = bitrate_of(SILENCE)
+        slicebytes = max(2048, int(br / 16))
+        left = max(1, int(seconds * 4))
+        with open(SILENCE, "rb") as f:
+            data = f.read(slicebytes * left)
+        for i in range(0, len(data), slicebytes):
+            paced_broadcast(data[i:i + slicebytes], br, burst)
+    except Exception:
+        time.sleep(0.2)
+
+
 def producer_loop():
     """THE station: one thread reads the music and broadcasts to every listener."""
     burst = [32000]  # ~2s cushion: listeners (and the DJ app monitor) hear changes sooner
     last_ad = [""]
     jingle_i = [0]
     while True:
+        # ---- HYBRID: the DJ's phone takes over the moment it comes online.
+        # While the phone sends audio the listeners hear the phone and the title says so.
+        # When the phone stops, the station sends 60 seconds of silence and then the
+        # normal music and programmes come back on their own.
+        if HYBRID:
+            if live_files():
+                PHONE_WAS_LIVE[0] = True
+                PHONE_END_TS[0] = 0.0
+                with lock:
+                    if now_playing["song"] != "Live from the DJ's phone - the DJ is online":
+                        now_playing["song"] = "Live from the DJ's phone - the DJ is online"
+                        save_np()
+                _send_live(burst)
+                continue
+            if PHONE_WAS_LIVE[0]:
+                if not PHONE_END_TS[0]:
+                    PHONE_END_TS[0] = time.time()
+                    blog("PHONE_OFFLINE 60s silence")
+                if time.time() - PHONE_END_TS[0] < 60:
+                    label = "The DJ went offline - music is back in a moment"
+                    with lock:
+                        if now_playing["song"] != label:
+                            now_playing["song"] = label
+                            save_np()
+                    stream_silence(burst, 0.6)
+                    continue
+                PHONE_WAS_LIVE[0] = False
+                PHONE_END_TS[0] = 0.0
+                blog("PHONE_OFFLINE music resumes")
         # ---- PHONE ONLY: the station is just the DJ's phone. No cloud music, no programmes.
         # On air only while the phone keeps sending audio; otherwise it says so and sends silence.
         if PHONE_ONLY:
